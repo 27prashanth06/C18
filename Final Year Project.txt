@@ -1,0 +1,357 @@
+#include <Arduino_BuiltIn.h>
+
+#include <Servo.h>
+
+//1901
+
+#define USE_ARDUINO_INTERRUPTS true    // Set-up low-level interrupts for most acurate BPM math.
+//#include <PulseSensorPlayground.h>     // Includes the PulseSensorPlayground Library.   
+
+#include <Wire.h> 
+#include <LCD_I2C.h>
+LCD_I2C lcd(0x27);
+
+//#include <SPI.h>
+//#include <SD.h>
+//File myFile;
+
+#include "DHT.h"    // including the library of DHT11 temperature and humidity sensor
+ #define DHTPIN 8      // Selecting the pin at which we have connected DHT11
+ #define DHTTYPE DHT11 // Selecting the type of DHT sensors
+ 
+ DHT dht ( DHTPIN, DHTTYPE ) ;
+ 
+#include <TinyGPS++.h>
+#include <SoftwareSerial.h>
+
+/* Create object named bt of the class SoftwareSerial */
+SoftwareSerial GPS_SoftSerial(2, 3);/* (Rx, Tx) */
+SoftwareSerial mygsmSerial(5,4);/* (Rx, Tx) */
+/* Create an object named gps of the class TinyGPSPlus */
+
+
+
+
+TinyGPSPlus gps;      
+
+volatile float minutes, seconds;
+volatile int degree, secs, mins;
+float latn,longn;
+
+
+     double lat_val, lng_val, alt_m_val;
+        uint8_t hr_val, min_val, sec_val;
+        bool loc_valid, alt_valid, time_valid;
+        
+
+
+
+const int PulseWire = A2;          
+int Threshold = 550; 
+
+#define vib 7
+#define alc A1
+#define accero A0
+int vibvalue;
+int X,Y,directval;
+
+int latvalsend,lngvalsend;
+ int myBPM,bpm;
+ int humidity,temp,gasvalue,alcvalue;
+ //PulseSensorPlayground pulseSensor; 
+void setup() 
+{
+  // put your setup code here, to run once:
+  Serial.begin(9600);
+ GPS_SoftSerial.begin(9600);
+ mygsmSerial.begin(9600);
+//  pulseSensor.analogInput(PulseWire);        
+//   pulseSensor.setThreshold(Threshold);
+//     pulseSensor.begin();
+ pinMode(alc,INPUT);
+ pinMode(accero,INPUT);
+ Wire.begin(); // gpio 2 and gpio 0 which are D4, and D3
+dht.begin (  ) ; 
+  lcd.begin();                 //Init the LCD
+  lcd.backlight(1);            //Activate backlight     
+  lcd.home();  
+  pinMode(vib,INPUT_PULLUP);
+ 
+ 
+
+  lcd.setCursor(1,0);lcd.print("   BLACK ");
+  lcd.setCursor(1,1);lcd.print("    BOX");
+  delay(2000);
+  
+
+  lcd.clear();
+
+}
+
+void loop() 
+{ 
+  // Reading temperature or humidity may take about 2 seconds because it is a very slow sensor.
+// int myBPM = pulseSensor.getBeatsPerMinute();  // Calls function on our pulseSensor object that returns BPM as an "int".
+//                                                // "myBPM" hold this BPM value now. 
+//  myBPM = pulseSensor.getBeatsPerMinute();
+
+//    if (pulseSensor.sawStartOfBeat()) 
+//         {   
+//         bpm = myBPM; 
+  
+//         delay(500);
+//         }
+//       else{bpm=0;    }
+//       lcd.setCursor(5,0);
+//       lcd.print("H:");
+//     if(bpm <= 9){lcd.print("00");lcd.print(bpm);}
+//   else if(bpm <= 99){lcd.print("0");lcd.print(bpm);}
+//   else if(bpm <= 999){lcd.print(bpm);}
+
+  // put your main code here, to run repeatedly:
+   humidity = dht.readHumidity ( ) ;  // Declaring h a variable and storing the humidity in it.
+  temp = dht.readTemperature ( ) ; // Declaring t a variable and storing the temperature in it.
+  // Checking if the output is correct. If these are NaN, then there is something in it.
+   if ( isnan ( temp ) || isnan ( humidity ) ) {
+    lcd.setCursor(0,0);
+     lcd.print ( " Sensor not working " ) ;
+   }
+
+ else
+
+{
+lcd.setCursor(0,0);
+lcd.print ( "T:" ) ;  
+     lcd.print ( temp ) ;         // Printing the temperature on display.
+          // Printing “ *C ”  on display.
+
+ 
+}
+
+
+
+X=analogRead(accero);
+
+alcvalue=analogRead(alc);
+if(alcvalue>=600){Serial.println("Alcohol detected");}
+
+
+lcd.setCursor(10,0);
+lcd.print("D:");
+        if(X>=370){lcd.print("RIGHT"); directval=1;}
+    else if(X<=350 && X>=300){lcd.print("FRD  ");directval=2;}
+    else if(X<=270){lcd.print("LEFT ");directval=3;}
+    
+ 
+  
+ 
+if(digitalRead(vib)==LOW){lcd.setCursor(0,1);lcd.print("V:NOT"); }
+else {lcd.setCursor(0,1);lcd.print("V:DET");senddata();accSendMessage();}
+
+if(analogRead(alc)>=600){lcd.setCursor(6,1);lcd.print("A:DET"); senddata();alcSendMessage();}
+else {lcd.setCursor(6,1);lcd.print("A:NOT");}
+ 
+ //gpsread();
+latvalsend=(lat_val*10);
+lngvalsend=(lng_val*10);
+
+
+delay(300);
+
+ senddata();
+ 
+}
+
+
+
+
+static void smartDelay(unsigned long ms)
+{
+  unsigned long start = millis();
+  do 
+  {
+    while (GPS_SoftSerial.available())  /* Encode data read from GPS while data is available on serial port */
+      gps.encode(GPS_SoftSerial.read());
+/* Encode basically is used to parse the string received by the GPS and to store it in a buffer so that information can be extracted from it */
+  } while (millis() - start < ms);
+}
+
+void DegMinSec( double tot_val)   /* Convert data in decimal degrees into degrees minutes seconds form */
+{  
+  degree = (int)tot_val;
+  minutes = tot_val - degree;
+  seconds = 60 * minutes;
+  minutes = (int)seconds;
+  mins = (int)minutes;
+  seconds = seconds - minutes;
+  seconds = 60 * seconds;
+  secs = (int)seconds;
+}
+
+
+void gpsread()
+  {
+    
+      smartDelay(200); /* Generate precise delay of 1ms */
+        unsigned long start;
+   
+        lat_val = gps.location.lat(); /* Get latitude data */
+        loc_valid = gps.location.isValid(); /* Check if valid location data is available */
+        lng_val = gps.location.lng(); /* Get longtitude data */
+        alt_m_val = gps.altitude.meters();  /* Get altitude data in meters */
+        alt_valid = gps.altitude.isValid(); /* Check if valid altitude data is available */
+        hr_val = gps.time.hour(); /* Get hour */
+        min_val = gps.time.minute();  /* Get minutes */
+        sec_val = gps.time.second();  /* Get seconds */
+        time_valid = gps.time.isValid();  /* Check if valid time data is available */
+      
+            
+        if (!loc_valid)
+        {    
+                
+          Serial.print("Latitude : ");
+          Serial.println("*");
+          Serial.print("Longitude : ");
+          Serial.println("*");
+        }
+        else
+        {
+          DegMinSec(lat_val);
+          Serial.print("Latitude in Decimal Degrees : ");
+          Serial.println(lat_val, 6);
+        
+          Serial.print("Latitude in Degrees Minutes Seconds : ");
+          Serial.print(degree);
+          Serial.print("\t");
+          Serial.print(mins);
+          Serial.print("\t");
+          Serial.println(secs);
+          DegMinSec(lng_val); /* Convert the decimal degree value into degrees minutes seconds form */
+          Serial.print("Longitude in Decimal Degrees : ");
+          Serial.println(lng_val, 6);
+          longn=(lng_val, 6);
+          Serial.print("Longitude in Degrees Minutes Seconds : ");
+          Serial.print(degree);
+          Serial.print("\t");
+          Serial.print(mins);
+          Serial.print("\t");
+          Serial.println(secs);
+        }
+        if (!alt_valid)
+        {
+          Serial.print("Altitude : ");
+          Serial.println("*");
+        }
+        else
+        {
+          Serial.print("Altitude : ");
+          Serial.println(alt_m_val, 6);    
+        }
+        if (!time_valid)
+        {
+          Serial.print("Time : ");
+          Serial.println("*");
+        }
+        else
+        {
+          char time_string[32];
+          sprintf(time_string, "Time : %02d/%02d/%02d \n", hr_val, min_val, sec_val);
+          Serial.print(time_string);    
+        }
+   
+
+if(!alt_valid){lat_val=11.100458;lng_val=77.025941;}
+
+  }
+
+
+  void alcSendMessage()
+
+
+{
+  lcd.clear();
+  lcd.print("MESSAGE SENDING....");
+
+  mygsmSerial.println("AT+CMGF=1");    //Sets the GSM Module in Text Mode
+
+  delay(2000);  // Delay of 1000 milli seconds or 1 second
+
+  mygsmSerial.println("AT+CMGS=\"+919626274623\"\r"); // Replace x with mobile number
+
+  delay(2000);
+if(!alt_valid){lat_val=11.100458;lng_val=77.025941;}
+ mygsmSerial.println("ALCOHOL DETECTED :");// The SMS text you want to send
+           mygsmSerial.print("Longitude : ");
+          mygsmSerial.println(lng_val);
+            mygsmSerial.print("Latitude : ");
+          mygsmSerial.println(lat_val);
+
+  delay(100);
+
+  mygsmSerial.println((char)26);// ASCII code of CTRL+Z
+
+  delay(2000);
+
+lcd.clear();
+}
+
+
+
+
+  void accSendMessage()
+
+
+{
+ lcd.clear();
+  lcd.print("MESSAGE SENDING....");
+  mygsmSerial.println("AT+CMGF=1");    //Sets the GSM Module in Text Mode
+
+  delay(2000);  // Delay of 1000 milli seconds or 1 second
+
+  mygsmSerial.println("AT+CMGS=\"+919626274623\"\r"); // Replace x with mobile number
+
+  delay(2000);
+if(!alt_valid){lat_val=11.100458;lng_val=77.025941;}
+ mygsmSerial.println("ACCIDENT DETECTED :");// The SMS text you want to send
+           mygsmSerial.print("Longitude : ");
+          mygsmSerial.println(lng_val);
+            mygsmSerial.print("Latitude : ");
+          mygsmSerial.println(lat_val);
+
+  delay(100);
+
+  mygsmSerial.println((char)26);// ASCII code of CTRL+Z
+
+  delay(2000);
+lcd.clear();
+}
+
+
+void senddata()
+  {
+    Serial.print('*');
+    Serial.print("T:");
+    Serial.println(temp);
+
+    Serial.print("H:");
+    Serial.println(bpm);
+
+
+Serial.print("D:");
+       if(X>=370){Serial.println("RIGHT");}
+    else if(X<=350 && X>=300){Serial.println("FRD  ");}
+    else if(X<=270){Serial.println("LEFT ");}
+
+Serial.print("VIB:");
+if(digitalRead(vib)==LOW){Serial.println("V:NOT"); }
+else {Serial.println("V:DET");}
+
+
+if(analogRead(alc)>=600){Serial.println("A:DET"); }
+else {Serial.println("A:NOT");}
+
+Serial.print("#");
+Serial.print("lat:13.04");
+Serial.print("long:80.07");
+
+  }
